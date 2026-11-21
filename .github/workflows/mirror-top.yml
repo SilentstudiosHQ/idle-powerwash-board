@@ -1,0 +1,47 @@
+# Idle Powerwash: copies the global Top Washers list from Supabase to this repo every 10 minutes.
+# GitHub Pages serves it at https://silentstudioshq.github.io/idle-powerwash-board/top.txt, an address VRChat trusts,
+# so every player can read the list (Supabase itself needs "Allow Untrusted URLs").
+# Same as the Catch and Clash mirror (SilentstudiosHQ/catch-and-clash-board). Pages: branch main, folder / (root).
+name: Mirror Top Washers
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: mirror-top
+  cancel-in-progress: true
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the list
+        run: |
+          curl -fsS --max-time 30 "https://cdxvrluuwacfuuvmvcej.supabase.co/functions/v1/ipw?top" -o top.new
+          head -c 4 top.new | grep -q "ipw1"
+          # the first line carries the time, so compare the washers only: commit when they changed
+          # (and once a day anyway, so GitHub keeps the schedule alive)
+          tail -n +2 top.new > body.new
+          if [ -f top.txt ]; then tail -n +2 top.txt > body.old; else : > body.old; fi
+          head -n 1 top.new | cut -f2,3 > counts.new
+          if [ -f top.txt ]; then head -n 1 top.txt | cut -f2,3 > counts.old; else : > counts.old; fi
+          date -u +%F > day.new
+          if cmp -s body.new body.old && cmp -s counts.new counts.old && [ -f .day ] && cmp -s day.new .day; then
+            echo "CHANGED=0" >> "$GITHUB_ENV"
+          else
+            mv top.new top.txt
+            mv day.new .day
+            echo "CHANGED=1" >> "$GITHUB_ENV"
+          fi
+          rm -f top.new body.new body.old day.new counts.new counts.old
+      - name: Commit
+        if: env.CHANGED == '1'
+        run: |
+          touch .nojekyll
+          git config user.name "top-washers-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add top.txt .day .nojekyll
+          git commit -m "Top Washers update"
+          git push
